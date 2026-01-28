@@ -3,19 +3,19 @@
   <body>
 
     <!-- Password Screen -->
-    <div id="login">
+    <form id="login" onsubmit="check(); return false;">
       <h2>Enter Password</h2>
       <input type="password" id="pwd" />
-      <button onclick="check()">Enter</button>
+      <button type="submit">Enter</button>
       <p id="error" style="color:red;"></p>
-    </div>
+    </form>
 
     <!-- Main App -->
     <div id="app" style="display:none;">
       <h1>ACORD 25 Autofill</h1>
 
       <p><b>Upload document (PDF, DOC, Image):</b></p>
-      <input type="file" id="fileInput" />
+      <input type="file" id="fileInput" multiple="false" />
 
       <p><b>Additional text (optional):</b></p>
       <textarea id="extraText" rows="5" cols="50"></textarea>
