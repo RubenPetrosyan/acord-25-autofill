@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <div id="login">
+      <h2>Enter Password</h2>
+      <input type="password" id="pwd" />
+      <button onclick="check()">Enter</button>
+      <p id="error" style="color:red;"></p>
+    </div>
+
+    <div id="app" style="display:none;">
+      <h1>ACORD 25 Autofill</h1>
+      <p>Unlocked.</p>
+    </div>
+
+    <script>
+      function check() {
+        if (document.getElementById("pwd").value === "10OC010") {
+          document.getElementById("login").style.display = "none";
+          document.getElementById("app").style.display = "block";
+        } else {
+          document.getElementById("error").innerText = "Wrong password";
+        }
+      }
+    </script>
+  </body>
+</html>
