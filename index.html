@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html>
   <body>
+
+    <!-- Password Screen -->
     <div id="login">
       <h2>Enter Password</h2>
       <input type="password" id="pwd" />
@@ -8,9 +10,18 @@
       <p id="error" style="color:red;"></p>
     </div>
 
+    <!-- Main App -->
     <div id="app" style="display:none;">
       <h1>ACORD 25 Autofill</h1>
-      <p>Unlocked.</p>
+
+      <p><b>Upload document (PDF, DOC, Image):</b></p>
+      <input type="file" id="fileInput" />
+
+      <p><b>Additional text (optional):</b></p>
+      <textarea id="extraText" rows="5" cols="50"></textarea>
+
+      <br><br>
+      <button disabled>Fill ACORD 25</button>
     </div>
 
     <script>
@@ -23,5 +34,6 @@
         }
       }
     </script>
+
   </body>
 </html>
