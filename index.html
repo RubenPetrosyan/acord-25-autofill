@@ -1,72 +1,196 @@
 <!DOCTYPE html>
-<html>
-  <body>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ACORD 25 Autofill</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- Password Screen -->
-    <form id="login" onsubmit="unlock(); return false;">
-      <h2>Enter Password</h2>
-      <input type="password" id="pwd" required />
-      <button type="submit">Enter</button>
-      <p id="error" style="color:red;"></p>
-    </form>
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f4f6f8;
+      margin: 0;
+      padding: 0;
+    }
 
-    <!-- Main App -->
-    <div id="app" style="display:none;">
-      <h1>ACORD 25 Autofill</h1>
+    .container {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
 
-      <p><b>Upload document (PDF, DOC, Image, TXT):</b></p>
-      <input type="file" id="fileInput" onchange="toggleButton()" />
+    .card {
+      background: #ffffff;
+      max-width: 600px;
+      width: 100%;
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+      padding: 30px;
+    }
 
-      <p><b>Additional text (optional):</b></p>
-      <textarea id="extraText" rows="5" cols="60"></textarea>
+    h1, h2 {
+      margin-top: 0;
+      text-align: center;
+    }
 
-      <br><br>
-      <button id="fillBtn" disabled onclick="process()">Fill ACORD 25</button>
+    p {
+      color: #444;
+    }
 
-      <p id="status"></p>
+    label {
+      font-weight: bold;
+      display: block;
+      margin-top: 20px;
+      margin-bottom: 5px;
+    }
 
-      <h3>AI Output</h3>
-      <pre id="output" style="white-space: pre-wrap; border:1px solid #ccc; padding:10px;"></pre>
-    </div>
+    input[type="password"],
+    input[type="file"],
+    textarea {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
 
-    <script>
-      function unlock() {
-        if (pwd.value === "10OC010") {
-          login.style.display = "none";
-          app.style.display = "block";
-        } else {
-          error.innerText = "Wrong password";
-        }
+    textarea {
+      resize: vertical;
+    }
+
+    button {
+      margin-top: 20px;
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+    }
+
+    button:disabled {
+      background: #a5b4fc;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 15px;
+      font-weight: bold;
+      text-align: center;
+    }
+
+    .error {
+      color: #dc2626;
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    .output {
+      margin-top: 20px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #fafafa;
+      white-space: pre-wrap;
+      font-size: 13px;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+
+    @media (max-width: 480px) {
+      .card {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <!-- LOGIN -->
+  <form id="login" class="card" onsubmit="unlock(); return false;">
+    <h2>ACORD 25 Autofill</h2>
+    <p style="text-align:center;">Enter password to continue</p>
+
+    <label>Password</label>
+    <input type="password" id="pwd" required />
+
+    <button type="submit">Unlock</button>
+    <div id="error" class="error"></div>
+  </form>
+
+  <!-- APP -->
+  <div id="app" class="card" style="display:none;">
+    <h1>ACORD 25 Autofill</h1>
+
+    <label>Upload document (PDF, DOC, Image, TXT)</label>
+    <input type="file" id="fileInput" onchange="toggleButton()" />
+
+    <label>Additional text (optional)</label>
+    <textarea id="extraText" rows="5"></textarea>
+
+    <button id="fillBtn" disabled onclick="process()">Fill ACORD 25</button>
+
+    <div id="status" class="status"></div>
+
+    <div id="output" class="output"></div>
+  </div>
+
+</div>
+
+<script>
+  function unlock() {
+    if (pwd.value === "10OC010") {
+      login.style.display = "none";
+      app.style.display = "block";
+    } else {
+      error.innerText = "Wrong password";
+    }
+  }
+
+  function toggleButton() {
+    fillBtn.disabled = !fileInput.files.length;
+  }
+
+  async function process() {
+    status.innerText = "Processing...";
+    output.innerText = "";
+
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+    formData.append("text", extraText.value);
+
+    try {
+      const res = await fetch("/api/process", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        status.innerText = "Error";
+        return;
       }
 
-      function toggleButton() {
-        fillBtn.disabled = !fileInput.files.length;
-      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
 
-     async function process() {
-  status.innerText = "Processing...";
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ACORD_25_Filled.pdf";
+      a.click();
 
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
-  formData.append("text", extraText.value);
+      status.innerText = "Download complete";
+    } catch (e) {
+      status.innerText = "Request failed";
+    }
+  }
+</script>
 
-  const res = await fetch("/api/process", {
-    method: "POST",
-    body: formData,
-  });
-
-  const blob = await res.blob();
-  const url = window.URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "ACORD_25_Filled.pdf";
-  a.click();
-
-  status.innerText = "Download complete";
-}
-
-    </script>
-
-  </body>
+</body>
 </html>
