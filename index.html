@@ -3,9 +3,9 @@
   <body>
 
     <!-- Password Screen -->
-    <form id="login" onsubmit="check(); return false;">
+    <form id="login" onsubmit="unlock(); return false;">
       <h2>Enter Password</h2>
-      <input type="password" id="pwd" />
+      <input type="password" id="pwd" required />
       <button type="submit">Enter</button>
       <p id="error" style="color:red;"></p>
     </form>
@@ -14,49 +14,59 @@
     <div id="app" style="display:none;">
       <h1>ACORD 25 Autofill</h1>
 
-      <p><b>Upload document (PDF, DOC, Image):</b></p>
+      <p><b>Upload document (PDF, DOC, Image, TXT):</b></p>
       <input type="file" id="fileInput" onchange="toggleButton()" />
 
       <p><b>Additional text (optional):</b></p>
-      <textarea id="extraText" rows="5" cols="50"></textarea>
+      <textarea id="extraText" rows="5" cols="60"></textarea>
 
       <br><br>
       <button id="fillBtn" disabled onclick="process()">Fill ACORD 25</button>
+
       <p id="status"></p>
+
+      <h3>AI Output</h3>
+      <pre id="output" style="white-space: pre-wrap; border:1px solid #ccc; padding:10px;"></pre>
     </div>
 
     <script>
-  function check() {
-    if (pwd.value === "10OC010") {
-      login.style.display = "none";
-      app.style.display = "block";
-    } else {
-      error.innerText = "Wrong password";
-    }
-  }
+      function unlock() {
+        if (pwd.value === "10OC010") {
+          login.style.display = "none";
+          app.style.display = "block";
+        } else {
+          error.innerText = "Wrong password";
+        }
+      }
 
-  function toggleButton() {
-    fillBtn.disabled = !fileInput.files.length;
-  }
+      function toggleButton() {
+        fillBtn.disabled = !fileInput.files.length;
+      }
 
-  async function process() {
-    status.innerText = "Uploading...";
+     async function process() {
+  status.innerText = "Processing...";
 
-    const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
-    formData.append("text", extraText.value);
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  formData.append("text", extraText.value);
 
-    const res = await fetch("/api/process", {
-      method: "POST",
-      body: formData
-    });
+  const res = await fetch("/api/process", {
+    method: "POST",
+    body: formData,
+  });
 
-    const data = await res.json();
-    status.innerText = data.message;
-  }
-</script>
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
 
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "ACORD_25_Filled.pdf";
+  a.click();
 
+  status.innerText = "Download complete";
+}
+
+    </script>
 
   </body>
 </html>
