@@ -230,14 +230,27 @@ ${combinedText}
       const aiData = await aiResponse.json();
 
       let extracted;
-      try {
-        extracted = JSON.parse(aiData.output_text);
-      } catch {
-        console.error(aiData);
-        return res.status(500).json({
-          message: "AI returned invalid JSON",
-        });
-      }
+
+try {
+  const textOutput = aiData.output
+    ?.flatMap(o => o.content)
+    ?.find(c => c.type === "output_text")
+    ?.text;
+
+  if (!textOutput) {
+    console.error("No output_text found:", aiData);
+    throw new Error("Missing AI output");
+  }
+
+  extracted = JSON.parse(textOutput);
+} catch (e) {
+  console.error("AI PARSE ERROR:", e);
+  console.error(aiData);
+  return res.status(500).json({
+    message: "AI returned invalid JSON",
+  });
+}
+
 
       // Drop empty values
       Object.keys(extracted).forEach(k => {
@@ -254,9 +267,53 @@ ${combinedText}
         "public/templates/ACORD_0025_2016-03_Acroform.pdf"
       );
 
+      
+
       const pdfTemplate = fs.readFileSync(templatePath);
       const pdfDoc = await PDFDocument.load(pdfTemplate);
       const pdfForm = pdfDoc.getForm();
+
+      let filledCount = 0;
+const missingFields = [];
+
+for (const key in extracted) {
+  const value = extracted[key];
+  let filled = false;
+
+  // 1️⃣ Text field
+  try {
+    pdfForm.getTextField(key).setText(String(value));
+    filled = true;
+  } catch {}
+
+  // 2️⃣ Checkbox
+  if (!filled) {
+    try {
+      const checkbox = pdfForm.getCheckBox(key);
+      isTruthy(value) ? checkbox.check() : checkbox.uncheck();
+      filled = true;
+    } catch {}
+  }
+
+  // 3️⃣ Radio group
+  if (!filled) {
+    try {
+      const radio = pdfForm.getRadioGroup(key);
+      radio.select(String(value));
+      filled = true;
+    } catch {}
+  }
+
+  if (filled) {
+    filledCount++;
+  } else {
+    missingFields.push(key);
+  }
+}
+
+console.log("✅ Filled fields count:", filledCount);
+console.log("⚠️ Fields not found in PDF:", missingFields);
+
 
       for (const key in extracted) {
         const value = extracted[key];
