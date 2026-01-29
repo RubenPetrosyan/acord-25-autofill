@@ -75,7 +75,7 @@ Instruction: ${r["What to Enter"]}`
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            Authorization: `Bearer ${process.env.Acord25}`,
           },
           body: JSON.stringify({
             model: "gpt-4.1-mini",
