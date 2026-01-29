@@ -90,7 +90,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ message: "POST only" });
   }
 
-  console.log("🔐 OpenAI key exists:", Boolean(process.env.Acord25));
+  console.log("🔐 OpenAI key exists:", Boolean(process.env.OPENAI_API_KEY));
 
   const form = formidable({
     multiples: true,
@@ -151,7 +151,7 @@ Instruction: ${r["What to Enter"]}`
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.Acord25}`,
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           },
           body: JSON.stringify({
             model: "gpt-4.1-mini",
