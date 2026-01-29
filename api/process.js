@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import pdf from "pdf-parse";
 import XLSX from "xlsx";
+import mammoth from "mammoth";
 import { PDFDocument } from "pdf-lib";
 import Tesseract from "tesseract.js";
 
@@ -12,7 +13,20 @@ export const config = {
   },
 };
 
-/* ---------- LOAD EXTRACTION SCHEMA ---------- */
+/* ================================
+   HELPER FUNCTIONS (CHECKBOX / RADIO)
+================================ */
+function isTruthy(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    return ["true", "yes", "checked", "1"].includes(value.toLowerCase());
+  }
+  return false;
+}
+
+/* ================================
+   LOAD EXTRACTION SCHEMA
+================================ */
 function loadSchema() {
   const schemaPath = path.join(
     process.cwd(),
@@ -24,25 +38,26 @@ function loadSchema() {
   return XLSX.utils.sheet_to_json(sheet);
 }
 
-/* ---------- TEXT EXTRACTION (WITH OCR) ---------- */
-async function extractText(file) {
+/* ================================
+   EXTRACT TEXT FROM ONE FILE
+================================ */
+async function extractTextFromFile(file) {
   const buffer = fs.readFileSync(file.filepath);
-  const filename = file.originalFilename.toLowerCase();
+  const name = file.originalFilename.toLowerCase();
 
   // TXT
-  if (filename.endsWith(".txt")) {
+  if (name.endsWith(".txt")) {
     return buffer.toString("utf8");
   }
 
   // PDF (OCR fallback)
-  if (filename.endsWith(".pdf")) {
+  if (name.endsWith(".pdf")) {
     const pdfData = await pdf(buffer);
 
     if (pdfData.text && pdfData.text.trim().length > 50) {
       return pdfData.text;
     }
 
-    // Scanned PDF → OCR
     const {
       data: { text },
     } = await Tesseract.recognize(buffer, "eng");
@@ -51,11 +66,7 @@ async function extractText(file) {
   }
 
   // IMAGES → OCR
-  if (
-    filename.endsWith(".png") ||
-    filename.endsWith(".jpg") ||
-    filename.endsWith(".jpeg")
-  ) {
+  if (name.match(/\.(png|jpg|jpeg)$/)) {
     const {
       data: { text },
     } = await Tesseract.recognize(buffer, "eng");
@@ -63,36 +74,102 @@ async function extractText(file) {
     return text;
   }
 
-  throw new Error("Unsupported file type");
+  // DOC / DOCX
+  if (name.endsWith(".docx") || name.endsWith(".doc")) {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
+  }
+
+  // EXCEL AS CONTENT (NOT SCHEMA)
+  if (name.endsWith(".xls") || name.endsWith(".xlsx")) {
+    const workbook = XLSX.read(buffer);
+    let text = "";
+
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+      rows.forEach(row => {
+        if (row.length) {
+          text += row.join(" | ") + "\n";
+        }
+      });
+    }
+
+    return text;
+  }
+
+  throw new Error(`Unsupported file type: ${name}`);
 }
 
-/* ---------- API HANDLER ---------- */
+/* ================================
+   API HANDLER
+================================ */
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ message: "POST only" });
   }
 
-  const form = formidable({ multiples: false });
+  const form = formidable({
+    multiples: true,
+    maxFileSize: 10 * 1024 * 1024, // 10MB per file
+  });
 
   form.parse(req, async (err, fields, files) => {
     try {
-      if (err) {
-        throw err;
+      if (err) throw err;
+
+      const uploadedFiles = files.file
+        ? Array.isArray(files.file)
+          ? files.file
+          : [files.file]
+        : [];
+
+      const extraText = fields.text || "";
+
+      if (!uploadedFiles.length && !extraText.trim()) {
+        return res.status(400).json({
+          message: "No files or text provided",
+        });
       }
 
-      const file = files.file;
-      if (!file) {
-        return res.status(400).json({ message: "No file uploaded" });
+      /* ================================
+         MERGE ALL CONTENT
+      ================================ */
+      let combinedText = "";
+
+      for (const file of uploadedFiles) {
+        const text = await extractTextFromFile(file);
+
+        combinedText += `
+==============================
+FILE: ${file.originalFilename}
+==============================
+
+${text}
+
+`;
       }
 
-      /* ---------- EXTRACT DOCUMENT TEXT ---------- */
-      const documentText = await extractText(file);
+      if (extraText.trim()) {
+        combinedText += `
+==============================
+USER PROVIDED TEXT
+==============================
 
-      if (!documentText || documentText.trim().length === 0) {
-        return res.status(400).json({ message: "No text extracted" });
+${extraText}
+`;
       }
 
-      /* ---------- LOAD SCHEMA ---------- */
+      if (!combinedText.trim()) {
+        return res.status(400).json({
+          message: "No readable content extracted",
+        });
+      }
+
+      /* ================================
+         LOAD SCHEMA
+      ================================ */
       const schema = loadSchema();
 
       const schemaPrompt = schema
@@ -104,7 +181,9 @@ Instruction: ${r["What to Enter"]}`
         )
         .join("\n\n");
 
-      /* ---------- OPENAI EXTRACTION ---------- */
+      /* ================================
+         AI EXTRACTION (SINGLE REQUEST)
+      ================================ */
       const aiResponse = await fetch(
         "https://api.openai.com/v1/responses",
         {
@@ -131,11 +210,16 @@ RULES:
 - If missing, return empty string
 - Return JSON only
 
+FIELD TYPE RULES:
+- Text fields → string
+- Checkbox fields → true or false
+- Radio fields → exact option value
+
 SCHEMA:
 ${schemaPrompt}
 
 DOCUMENT:
-${documentText}
+${combinedText}
 `,
               },
             ],
@@ -149,17 +233,22 @@ ${documentText}
       try {
         extracted = JSON.parse(aiData.output_text);
       } catch {
-        return res
-          .status(500)
-          .json({ message: "AI returned invalid JSON" });
+        console.error(aiData);
+        return res.status(500).json({
+          message: "AI returned invalid JSON",
+        });
       }
 
-      // Remove empty values
+      // Drop empty values
       Object.keys(extracted).forEach(k => {
-        if (!extracted[k]) delete extracted[k];
+        if (extracted[k] === "" || extracted[k] == null) {
+          delete extracted[k];
+        }
       });
 
-      /* ---------- LOAD ACORD 25 TEMPLATE ---------- */
+      /* ================================
+         FILL ACORD 25 PDF (TEXT + CHECKBOX + RADIO)
+      ================================ */
       const templatePath = path.join(
         process.cwd(),
         "public/templates/ACORD_0025_2016-03_Acroform.pdf"
@@ -169,21 +258,39 @@ ${documentText}
       const pdfDoc = await PDFDocument.load(pdfTemplate);
       const pdfForm = pdfDoc.getForm();
 
-      /* ---------- FILL PDF ---------- */
       for (const key in extracted) {
+        const value = extracted[key];
+
+        // 1️⃣ Text field
         try {
-          const field = pdfForm.getTextField(key);
-          field.setText(String(extracted[key]));
-        } catch {
-          // ignore missing fields
-        }
+          pdfForm.getTextField(key).setText(String(value));
+          continue;
+        } catch {}
+
+        // 2️⃣ Checkbox
+        try {
+          const checkbox = pdfForm.getCheckBox(key);
+          isTruthy(value) ? checkbox.check() : checkbox.uncheck();
+          continue;
+        } catch {}
+
+        // 3️⃣ Radio group
+        try {
+          const radio = pdfForm.getRadioGroup(key);
+          radio.select(String(value));
+          continue;
+        } catch {}
+
+        // Ignore unsupported fields
       }
 
       pdfForm.flatten();
 
       const finalPdfBytes = await pdfDoc.save();
 
-      /* ---------- RETURN PDF ---------- */
+      /* ================================
+         RETURN PDF
+      ================================ */
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
         "Content-Disposition",
@@ -192,7 +299,7 @@ ${documentText}
 
       res.send(Buffer.from(finalPdfBytes));
     } catch (e) {
-      console.error(e);
+      console.error("PROCESS ERROR:", e);
       res.status(500).json({
         message: "Processing failed",
       });
