@@ -5,16 +5,13 @@ import pdf from "pdf-parse";
 import XLSX from "xlsx";
 import mammoth from "mammoth";
 import { PDFDocument } from "pdf-lib";
-import Tesseract from "tesseract.js";
 
 export const config = {
-  api: {
-    bodyParser: false,
-  },
+  api: { bodyParser: false },
 };
 
 /* ================================
-   HELPER FUNCTIONS (CHECKBOX / RADIO)
+   HELPERS
 ================================ */
 function isTruthy(value) {
   if (typeof value === "boolean") return value;
@@ -25,7 +22,7 @@ function isTruthy(value) {
 }
 
 /* ================================
-   LOAD EXTRACTION SCHEMA
+   LOAD SCHEMA
 ================================ */
 function loadSchema() {
   const schemaPath = path.join(
@@ -33,69 +30,50 @@ function loadSchema() {
     "public/schema/Mapping schema.xlsx"
   );
 
+  console.log("📄 Loading schema:", schemaPath);
+
   const workbook = XLSX.readFile(schemaPath);
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(sheet);
+  const schema = XLSX.utils.sheet_to_json(sheet);
+
+  console.log("📊 Schema rows:", schema.length);
+  return schema;
 }
 
 /* ================================
-   EXTRACT TEXT FROM ONE FILE
+   EXTRACT TEXT (NO OCR)
 ================================ */
 async function extractTextFromFile(file) {
   const buffer = fs.readFileSync(file.filepath);
   const name = file.originalFilename.toLowerCase();
 
-  // TXT
+  console.log("📥 Extracting:", name);
+
   if (name.endsWith(".txt")) {
     return buffer.toString("utf8");
   }
 
-  // PDF (OCR fallback)
   if (name.endsWith(".pdf")) {
     const pdfData = await pdf(buffer);
-
-    if (pdfData.text && pdfData.text.trim().length > 50) {
-      return pdfData.text;
-    }
-
-    const {
-      data: { text },
-    } = await Tesseract.recognize(buffer, "eng");
-
-    return text;
+    return pdfData.text || "";
   }
 
-  // IMAGES → OCR
-  if (name.match(/\.(png|jpg|jpeg)$/)) {
-    const {
-      data: { text },
-    } = await Tesseract.recognize(buffer, "eng");
-
-    return text;
-  }
-
-  // DOC / DOCX
   if (name.endsWith(".docx") || name.endsWith(".doc")) {
     const result = await mammoth.extractRawText({ buffer });
-    return result.value;
+    return result.value || "";
   }
 
-  // EXCEL AS CONTENT (NOT SCHEMA)
   if (name.endsWith(".xls") || name.endsWith(".xlsx")) {
     const workbook = XLSX.read(buffer);
     let text = "";
 
     for (const sheetName of workbook.SheetNames) {
-      const sheet = workbook.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
-      rows.forEach(row => {
-        if (row.length) {
-          text += row.join(" | ") + "\n";
-        }
-      });
+      const rows = XLSX.utils.sheet_to_json(
+        workbook.Sheets[sheetName],
+        { header: 1 }
+      );
+      rows.forEach(r => r.length && (text += r.join(" | ") + "\n"));
     }
-
     return text;
   }
 
@@ -106,13 +84,17 @@ async function extractTextFromFile(file) {
    API HANDLER
 ================================ */
 export default async function handler(req, res) {
+  console.log("🚀 /api/process hit");
+
   if (req.method !== "POST") {
     return res.status(405).json({ message: "POST only" });
   }
 
+  console.log("🔐 OpenAI key exists:", Boolean(process.env.Acord25));
+
   const form = formidable({
     multiples: true,
-    maxFileSize: 10 * 1024 * 1024, // 10MB per file
+    maxFileSize: 10 * 1024 * 1024,
   });
 
   form.parse(req, async (err, fields, files) => {
@@ -125,53 +107,29 @@ export default async function handler(req, res) {
           : [files.file]
         : [];
 
-      const extraText = fields.text || "";
+      console.log("📎 Uploaded files:", uploadedFiles.length);
 
-      if (!uploadedFiles.length && !extraText.trim()) {
-        return res.status(400).json({
-          message: "No files or text provided",
-        });
-      }
-
-      /* ================================
-         MERGE ALL CONTENT
-      ================================ */
       let combinedText = "";
 
       for (const file of uploadedFiles) {
         const text = await extractTextFromFile(file);
-
-        combinedText += `
-==============================
-FILE: ${file.originalFilename}
-==============================
-
-${text}
-
-`;
+        combinedText += `\n--- ${file.originalFilename} ---\n${text}\n`;
       }
 
-      if (extraText.trim()) {
-        combinedText += `
-==============================
-USER PROVIDED TEXT
-==============================
-
-${extraText}
-`;
+      if (fields.text?.trim()) {
+        combinedText += `\n--- USER TEXT ---\n${fields.text}\n`;
       }
+
+      console.log("🧾 Combined text length:", combinedText.length);
 
       if (!combinedText.trim()) {
-        return res.status(400).json({
-          message: "No readable content extracted",
-        });
+        return res.status(400).json({ message: "No readable content" });
       }
 
       /* ================================
-         LOAD SCHEMA
+         SCHEMA
       ================================ */
       const schema = loadSchema();
-
       const schemaPrompt = schema
         .map(
           r =>
@@ -182,8 +140,10 @@ Instruction: ${r["What to Enter"]}`
         .join("\n\n");
 
       /* ================================
-         AI EXTRACTION (SINGLE REQUEST)
+         OPENAI
       ================================ */
+      console.log("🧠 Sending request to OpenAI");
+
       const aiResponse = await fetch(
         "https://api.openai.com/v1/responses",
         {
@@ -198,23 +158,11 @@ Instruction: ${r["What to Enter"]}`
               {
                 role: "system",
                 content:
-                  "You extract insurance data. Never guess. Only return values explicitly present. Output valid JSON only.",
+                  "Extract insurance data. Never guess. Return valid JSON only.",
               },
               {
                 role: "user",
                 content: `
-RULES:
-- Extract ONLY if explicitly present
-- NO inference
-- NO guessing
-- If missing, return empty string
-- Return JSON only
-
-FIELD TYPE RULES:
-- Text fields → string
-- Checkbox fields → true or false
-- Radio fields → exact option value
-
 SCHEMA:
 ${schemaPrompt}
 
@@ -227,139 +175,87 @@ ${combinedText}
         }
       );
 
+      console.log("🧠 OpenAI status:", aiResponse.status);
+
       const aiData = await aiResponse.json();
 
+      const textOutput =
+        aiData?.output?.[0]?.content?.find(c => c.type === "output_text")
+          ?.text;
+
+      if (!textOutput) {
+        console.error("❌ No AI output text", aiData);
+        return res.status(500).json({ message: "AI failed" });
+      }
+
       let extracted;
+      try {
+        extracted = JSON.parse(textOutput);
+      } catch (e) {
+        console.error("❌ JSON parse failed", textOutput);
+        return res.status(500).json({ message: "Invalid AI JSON" });
+      }
 
-try {
-  const textOutput = aiData.output
-    ?.flatMap(o => o.content)
-    ?.find(c => c.type === "output_text")
-    ?.text;
-
-  if (!textOutput) {
-    console.error("No output_text found:", aiData);
-    throw new Error("Missing AI output");
-  }
-
-  extracted = JSON.parse(textOutput);
-} catch (e) {
-  console.error("AI PARSE ERROR:", e);
-  console.error(aiData);
-  return res.status(500).json({
-    message: "AI returned invalid JSON",
-  });
-}
-
-
-      // Drop empty values
-      Object.keys(extracted).forEach(k => {
-        if (extracted[k] === "" || extracted[k] == null) {
-          delete extracted[k];
-        }
-      });
+      console.log("✅ Extracted fields:", Object.keys(extracted).length);
 
       /* ================================
-         FILL ACORD 25 PDF (TEXT + CHECKBOX + RADIO)
+         PDF FILL
       ================================ */
       const templatePath = path.join(
         process.cwd(),
         "public/templates/ACORD_0025_2016-03_Acroform.pdf"
       );
 
-      
-
-      const pdfTemplate = fs.readFileSync(templatePath);
-      const pdfDoc = await PDFDocument.load(pdfTemplate);
+      const pdfDoc = await PDFDocument.load(
+        fs.readFileSync(templatePath)
+      );
       const pdfForm = pdfDoc.getForm();
 
-      let filledCount = 0;
-const missingFields = [];
-
-for (const key in extracted) {
-  const value = extracted[key];
-  let filled = false;
-
-  // 1️⃣ Text field
-  try {
-    pdfForm.getTextField(key).setText(String(value));
-    filled = true;
-  } catch {}
-
-  // 2️⃣ Checkbox
-  if (!filled) {
-    try {
-      const checkbox = pdfForm.getCheckBox(key);
-      isTruthy(value) ? checkbox.check() : checkbox.uncheck();
-      filled = true;
-    } catch {}
-  }
-
-  // 3️⃣ Radio group
-  if (!filled) {
-    try {
-      const radio = pdfForm.getRadioGroup(key);
-      radio.select(String(value));
-      filled = true;
-    } catch {}
-  }
-
-  if (filled) {
-    filledCount++;
-  } else {
-    missingFields.push(key);
-  }
-}
-
-console.log("✅ Filled fields count:", filledCount);
-console.log("⚠️ Fields not found in PDF:", missingFields);
-
+      let filled = 0;
+      let missing = [];
 
       for (const key in extracted) {
-        const value = extracted[key];
+        const val = extracted[key];
+        let done = false;
 
-        // 1️⃣ Text field
         try {
-          pdfForm.getTextField(key).setText(String(value));
-          continue;
+          pdfForm.getTextField(key).setText(String(val));
+          done = true;
         } catch {}
 
-        // 2️⃣ Checkbox
-        try {
-          const checkbox = pdfForm.getCheckBox(key);
-          isTruthy(value) ? checkbox.check() : checkbox.uncheck();
-          continue;
-        } catch {}
+        if (!done) {
+          try {
+            const cb = pdfForm.getCheckBox(key);
+            isTruthy(val) ? cb.check() : cb.uncheck();
+            done = true;
+          } catch {}
+        }
 
-        // 3️⃣ Radio group
-        try {
-          const radio = pdfForm.getRadioGroup(key);
-          radio.select(String(value));
-          continue;
-        } catch {}
+        if (!done) {
+          try {
+            pdfForm.getRadioGroup(key).select(String(val));
+            done = true;
+          } catch {}
+        }
 
-        // Ignore unsupported fields
+        done ? filled++ : missing.push(key);
       }
 
+      console.log("✅ Filled fields:", filled);
+      console.log("⚠️ Missing fields:", missing);
+
       pdfForm.flatten();
+      const bytes = await pdfDoc.save();
 
-      const finalPdfBytes = await pdfDoc.save();
-
-      /* ================================
-         RETURN PDF
-      ================================ */
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
         "Content-Disposition",
         'attachment; filename="ACORD_25_Filled.pdf"'
       );
-
-      res.send(Buffer.from(finalPdfBytes));
+      res.send(Buffer.from(bytes));
     } catch (e) {
-      console.error("PROCESS ERROR:", e);
-      res.status(500).json({
-        message: "Processing failed",
-      });
+      console.error("🔥 PROCESS ERROR:", e);
+      res.status(500).json({ message: "Processing failed" });
     }
   });
 }
