@@ -89,16 +89,27 @@
       margin-top: 10px;
     }
 
-    .output {
-      margin-top: 20px;
-      padding: 15px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      background: #fafafa;
-      white-space: pre-wrap;
+    .loader {
+      display: none;
+      margin: 20px auto;
+      border: 4px solid #e5e7eb;
+      border-top: 4px solid #2563eb;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .file-list {
+      margin-top: 10px;
       font-size: 13px;
-      max-height: 250px;
-      overflow-y: auto;
+      color: #374151;
     }
 
     @media (max-width: 480px) {
@@ -129,17 +140,23 @@
   <div id="app" class="card" style="display:none;">
     <h1>ACORD 25 Autofill</h1>
 
-    <label>Upload document (PDF, DOC, Image, TXT)</label>
-    <input type="file" id="fileInput" onchange="toggleButton()" />
+    <label>Upload documents (PDF, Images, TXT)</label>
+    <input
+      type="file"
+      id="fileInput"
+      multiple
+      onchange="toggleButton()"
+    />
+
+    <div id="fileList" class="file-list"></div>
 
     <label>Additional text (optional)</label>
     <textarea id="extraText" rows="5"></textarea>
 
     <button id="fillBtn" disabled onclick="process()">Fill ACORD 25</button>
 
+    <div id="loader" class="loader"></div>
     <div id="status" class="status"></div>
-
-    <div id="output" class="output"></div>
   </div>
 
 </div>
@@ -155,15 +172,28 @@
   }
 
   function toggleButton() {
-    fillBtn.disabled = !fileInput.files.length;
+    const files = fileInput.files;
+    fillBtn.disabled = !files.length;
+
+    fileList.innerHTML = "";
+    for (let i = 0; i < files.length; i++) {
+      const div = document.createElement("div");
+      div.textContent = `• ${files[i].name}`;
+      fileList.appendChild(div);
+    }
   }
 
   async function process() {
     status.innerText = "Processing...";
-    output.innerText = "";
+    loader.style.display = "block";
+    fillBtn.disabled = true;
 
     const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
+
+    for (const file of fileInput.files) {
+      formData.append("file", file);
+    }
+
     formData.append("text", extraText.value);
 
     try {
@@ -173,7 +203,7 @@
       });
 
       if (!res.ok) {
-        status.innerText = "Error";
+        status.innerText = "Error processing document";
         return;
       }
 
@@ -183,11 +213,16 @@
       const a = document.createElement("a");
       a.href = url;
       a.download = "ACORD_25_Filled.pdf";
+      document.body.appendChild(a);
       a.click();
+      a.remove();
 
       status.innerText = "Download complete";
     } catch (e) {
       status.innerText = "Request failed";
+    } finally {
+      loader.style.display = "none";
+      fillBtn.disabled = false;
     }
   }
 </script>
